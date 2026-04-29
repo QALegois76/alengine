@@ -36,6 +36,18 @@ Then refresh the browser page.
 
 After changing only files in `webTest/`, just refresh the browser.
 
+The triangle shader is embedded into the wasm from:
+
+```text
+src/shaders/triangle.wgsl
+```
+
+If you edit this shader file, rebuild the wasm and refresh the browser:
+
+```powershell
+wasm-pack build --target web --dev
+```
+
 ## Browser Debugging
 
 Open DevTools with `F12`.

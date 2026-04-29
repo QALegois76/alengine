@@ -16,24 +16,7 @@ use web_sys::{
 #[global_allocator]
 static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
 
-const SHADER: &str = r#"
-@vertex
-fn vs_main(@builtin(vertex_index) vertex_index: u32) -> @builtin(position) vec4<f32> {
-    var positions = array<vec2<f32>, 3>(
-        vec2<f32>(0.0, 0.65),
-        vec2<f32>(-0.65, -0.55),
-        vec2<f32>(0.65, -0.55),
-    );
-
-    let position = positions[vertex_index];
-    return vec4<f32>(position, 0.0, 1.0);
-}
-
-@fragment
-fn fs_main() -> @location(0) vec4<f32> {
-    return vec4<f32>(0.1, 0.75, 1.0, 1.0);
-}
-"#;
+const SHADER: &str = include_str!("shaders/triangle.wgsl");
 
 #[wasm_bindgen]
 pub async fn run() -> Result<(), JsValue> {
