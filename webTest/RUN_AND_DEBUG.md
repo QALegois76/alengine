@@ -39,7 +39,7 @@ After changing only files in `webTest/`, just refresh the browser.
 The triangle shader is embedded into the wasm from:
 
 ```text
-src/shaders/triangle.wgsl
+src/3d_models/triangle.wgsl
 ```
 
 If you edit this shader file, rebuild the wasm and refresh the browser:
