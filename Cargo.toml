@@ -1,5 +1,5 @@
 [package]
-name = "alEngine"
+name = "alengine"
 version = "0.1.0"
 authors = ["LEGOIS Antoine <antoine.legois@capatlas.fr>"]
 edition = "2018"
