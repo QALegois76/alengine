@@ -1,7 +1,11 @@
-mod utils;
 #[path = "3d_models/mod.rs"]
 pub(crate) mod models_3d;
+mod utils;
+
+#[path = "./models/World.rs"]
+pub(crate) mod models;
 mod render;
+mod shaders;
 
 use wasm_bindgen::prelude::*;
 

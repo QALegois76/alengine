@@ -1,45 +1,77 @@
+use crate::models::{Assets, RenderItem, Scene};
+use crate::render::compute_matrix;
 use wasm_bindgen::prelude::*;
 use web_sys::{
-    GpuBuffer, GpuCanvasContext, GpuDevice, GpuIndexFormat, GpuLoadOp,
-    GpuRenderPassColorAttachment, GpuRenderPassDescriptor, GpuRenderPipeline, GpuStoreOp,
+    GpuCanvasContext, GpuDevice, GpuIndexFormat, GpuLoadOp, GpuRenderPassColorAttachment,
+    GpuRenderPassDescriptor, GpuStoreOp, GpuTextureView,
 };
 
-pub fn draw_ico_sphere(
+// Draw an entire scene composed of objects. Each object provides its own
+// pipeline and buffers; we bind them in turn and issue indexed draws.
+pub fn draw_scene(
     device: &GpuDevice,
     context: &GpuCanvasContext,
-    pipeline: &GpuRenderPipeline,
-    vertex_buffer: &GpuBuffer,
-    index_buffer: &GpuBuffer,
-    index_count: u32,
+    scene: &Scene,
+    assets: &Assets,
 ) -> Result<(), JsValue> {
-    // Step: Current frame texture.
     let texture = context.get_current_texture()?;
     let view = texture.create_view()?;
 
-    // Step: Color attachment description.
-    let color_attachment =
-        GpuRenderPassColorAttachment::new_with_gpu_texture_view(GpuLoadOp::Clear, GpuStoreOp::Store, &view);
-    color_attachment.set_clear_value(&[0.02.into(), 0.025.into(), 0.035.into(), 1.0.into()]);
-
-    let color_attachment = js_sys::JsOption::wrap(color_attachment);
-    let render_pass_descriptor = GpuRenderPassDescriptor::new(&[color_attachment]);
     let command_encoder = device.create_command_encoder();
+    let pass_descriptor = create_pass(&view);
+    let pass = command_encoder.begin_render_pass(&pass_descriptor)?;
 
-    // Step: Render pass commands.
-    // What this does: binds the pipeline, binds mesh buffers, and records one
-    // indexed draw call.
-    let render_pass = command_encoder.begin_render_pass(&render_pass_descriptor)?;
-    render_pass.set_pipeline(pipeline);
-    render_pass.set_vertex_buffer(0, Some(vertex_buffer));
-    render_pass.set_index_buffer(index_buffer, GpuIndexFormat::Uint16);
-    render_pass.draw_indexed(index_count);
-    render_pass.end();
+    let items = build_render_items(scene);
 
-    // Step: Queue submission.
-    // What this does: finalizes the command encoder into a command buffer and
-    // submits it to the GPU queue for execution.
-    let command_buffer = command_encoder.finish();
-    device.queue().submit(&[command_buffer]);
+    for item in items {
+        let mesh = assets
+            .meshes
+            .get(item.mesh.index as usize)
+            .ok_or_else(|| missing_asset("mesh", item.mesh.index))?;
+        let material = assets
+            .materials
+            .get(item.material.index as usize)
+            .ok_or_else(|| missing_asset("material", item.material.index))?;
 
+        pass.set_pipeline(&material.pipeline);
+        pass.set_vertex_buffer(0, Some(&mesh.vertex_buffer));
+        pass.set_index_buffer(&mesh.index_buffer, GpuIndexFormat::Uint16);
+
+        pass.draw_indexed(mesh.index_count);
+    }
+
+    pass.end();
+
+    device.queue().submit(&[command_encoder.finish()]);
     Ok(())
+}
+
+fn create_pass(view: &GpuTextureView) -> GpuRenderPassDescriptor {
+    let color_attachment = GpuRenderPassColorAttachment::new_with_gpu_texture_view(
+        GpuLoadOp::Clear,
+        GpuStoreOp::Store,
+        view,
+    );
+    color_attachment.set_clear_value(&[0.02.into(), 0.025.into(), 0.035.into(), 1.0.into()]);
+    GpuRenderPassDescriptor::new(&[js_sys::JsOption::wrap(color_attachment)])
+}
+
+fn missing_asset(kind: &str, index: u32) -> JsValue {
+    js_sys::Error::new(&format!("missing {kind} asset at index {index}")).into()
+}
+
+pub fn build_render_items(scene: &Scene) -> Vec<RenderItem> {
+    let mut items = Vec::new();
+
+    for (index, renderer) in scene.mesh_renderers.iter().enumerate() {
+        if let (Some(renderer), Some(transform)) = (renderer, scene.transforms.get(index)) {
+            items.push(RenderItem {
+                mesh: renderer.mesh,
+                material: renderer.material,
+                transform: compute_matrix(*transform),
+            });
+        }
+    }
+
+    items
 }

@@ -11,9 +11,9 @@ pub struct MeshData {
 }
 
 impl MeshData {
-    pub fn index_count(&self) -> u32 {
-        self.indices.len() as u32
-    }
+    // pub fn index_count(&self) -> u32 {
+    //     self.indices.len() as u32
+    // }
 }
 
 pub fn mesh() -> MeshData {
@@ -33,12 +33,7 @@ pub fn mesh() -> MeshData {
             let bc = midpoint_index(b, c, &mut positions, &mut midpoints);
             let ca = midpoint_index(c, a, &mut positions, &mut midpoints);
 
-            next_indices.extend_from_slice(&[
-                a, ab, ca,
-                b, bc, ab,
-                c, ca, bc,
-                ab, bc, ca,
-            ]);
+            next_indices.extend_from_slice(&[a, ab, ca, b, bc, ab, c, ca, bc, ab, bc, ca]);
         }
 
         indices = next_indices;
@@ -69,26 +64,8 @@ pub const POSITIONS: [[f32; 3]; BASE_VERTEX_COUNT as usize] = [
 ];
 
 pub const INDICES: [u16; BASE_INDEX_COUNT as usize] = [
-    0, 11, 5,
-    0, 5, 1,
-    0, 1, 7,
-    0, 7, 10,
-    0, 10, 11,
-    1, 5, 9,
-    5, 11, 4,
-    11, 10, 2,
-    10, 7, 6,
-    7, 1, 8,
-    3, 9, 4,
-    3, 4, 2,
-    3, 2, 6,
-    3, 6, 8,
-    3, 8, 9,
-    4, 9, 5,
-    2, 4, 11,
-    6, 2, 10,
-    8, 6, 7,
-    9, 8, 1,
+    0, 11, 5, 0, 5, 1, 0, 1, 7, 0, 7, 10, 0, 10, 11, 1, 5, 9, 5, 11, 4, 11, 10, 2, 10, 7, 6, 7, 1,
+    8, 3, 9, 4, 3, 4, 2, 3, 2, 6, 3, 6, 8, 3, 8, 9, 4, 9, 5, 2, 4, 11, 6, 2, 10, 8, 6, 7, 9, 8, 1,
 ];
 
 fn midpoint_index(
