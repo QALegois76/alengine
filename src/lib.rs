@@ -19,7 +19,14 @@ static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
 pub async fn run() -> Result<(), JsValue> {
     utils::set_panic_hook();
 
-    let renderer = render::Render::new().await?;
+    let mut renderer = render::Render::create().await?;
+    
+    let mut transform = models::Transform::identity();
+    transform.x = 0.0;
+    transform.y = 0.0;
+    transform.z = 0.0;
+    renderer.add_sphere(transform, None)?;
+    
     renderer.draw_frame()?;
 
     Ok(())

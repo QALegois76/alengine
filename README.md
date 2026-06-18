@@ -17,18 +17,22 @@
   <sub>Built with 🦀🕸 by <a href="https://rustwasm.github.io/">The Rust and WebAssembly Working Group</a></sub>
 </div>
 
-## About
+## Building instructions
 
-[**📚 Read this template tutorial! 📚**][template-docs]
+Add build target
+```
+rustup target add wasm32-unknown-unknown
+```
+install dependencies
+``` 
+cargo install wasm-pack
+```
+build
+``` 
+wasm-pack build --target web --dev
+```
 
-This template is designed for compiling Rust libraries into WebAssembly and
-publishing the resulting package to NPM.
-
-Be sure to check out [other `wasm-pack` tutorials online][tutorials] for other
-templates and usages of `wasm-pack`.
-
-[tutorials]: https://rustwasm.github.io/docs/wasm-pack/tutorials/index.html
-[template-docs]: https://rustwasm.github.io/docs/wasm-pack/tutorials/npm-browser-packages/index.html
+build
 
 ## 🚴 Usage
 

@@ -34,6 +34,9 @@ pub fn draw_scene(
             .ok_or_else(|| missing_asset("material", item.material.index))?;
 
         pass.set_pipeline(&material.pipeline);
+        if let Some(bind_group) = &material.bind_group {
+            pass.set_bind_group(0, Some(bind_group));
+        }
         pass.set_vertex_buffer(0, Some(&mesh.vertex_buffer));
         pass.set_index_buffer(&mesh.index_buffer, GpuIndexFormat::Uint16);
 

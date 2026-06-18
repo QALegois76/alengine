@@ -26,6 +26,7 @@ web-sys = { version = "0.3.95", features = [
   "GpuAutoLayoutMode",
   "GpuBuffer",
   "GpuBufferDescriptor",
+  "gpu_buffer_usage",
   "GpuCanvasConfiguration",
   "GpuCanvasContext",
   "GpuColorTargetState",

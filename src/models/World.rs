@@ -1,4 +1,5 @@
-use web_sys::{GpuBuffer, GpuRenderPipeline};
+use wasm_bindgen::prelude::*;
+use web_sys::{GpuBindGroup, GpuBuffer, GpuRenderPipeline};
 
 pub struct Handle<T> {
     pub index: u32,
@@ -49,19 +50,37 @@ impl<T> std::hash::Hash for Handle<T> {
     }
 }
 
+#[wasm_bindgen]
 #[derive(Copy, Clone)]
 pub struct Transform {
-    pub position: [f32; 3],
-    pub rotation: [f32; 4],
-    pub scale: [f32; 3],
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+
+    pub rx: f32,
+    pub ry: f32,
+    pub rz: f32,
+    pub rw: f32,
+
+    pub sx: f32,
+    pub sy: f32,
+    pub sz: f32,
 }
 
+#[wasm_bindgen]
 impl Transform {
     pub fn identity() -> Self {
         Self {
-            position: [0.0, 0.0, 0.0],
-            rotation: [0.0, 0.0, 0.0, 1.0],
-            scale: [1.0, 1.0, 1.0],
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+            rx: 0.0,
+            ry: 0.0,
+            rz: 0.0,
+            rw: 1.0,
+            sx: 1.0,
+            sy: 1.0,
+            sz: 1.0,
         }
     }
 }
@@ -119,7 +138,7 @@ pub struct Mesh {
 
 pub struct Material {
     pub pipeline: GpuRenderPipeline,
-    pub bind_group: Option<Handle<BindGroup>>,
+    pub bind_group: Option<GpuBindGroup>,
 }
 
 pub struct RenderItem {

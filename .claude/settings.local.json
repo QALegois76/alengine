@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wasm-pack build *)",
+      "Bash(cargo build *)",
+      "Bash(\"/c/Users/qaleg/.cargo/bin/cargo.exe\" build *)"
+    ]
+  }
+}

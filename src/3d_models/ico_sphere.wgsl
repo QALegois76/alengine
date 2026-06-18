@@ -8,11 +8,14 @@ struct VertexOutput {
     @location(0) normal: vec3<f32>,
 };
 
+@group(0) @binding(0)
+var<uniform> model_matrix: mat4x4<f32>;
+
 @vertex
 fn vs_main(input: VertexInput) -> VertexOutput {
     var output: VertexOutput;
-    output.position = vec4<f32>(input.position * 0.75, 1.0);
-    output.normal = normalize(input.normal);
+    output.position = model_matrix * vec4<f32>(input.position, 1.0);
+    output.normal = (model_matrix * vec4<f32>(input.normal, 0.0)).xyz;
     return output;
 }
 
