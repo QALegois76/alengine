@@ -7,6 +7,10 @@ pub const GPU_BUFFER_USAGE_UNIFORM: u32 = 0x40;
 
 pub const GPU_TEXTURE_USAGE_RENDER_ATTACHMENT: u32 = 0x10;
 
+// Visibilité des bindings dans un GpuBindGroupLayoutEntry (GPUShaderStage).
+pub const GPU_SHADER_STAGE_VERTEX: u32 = 0x1;
+pub const GPU_SHADER_STAGE_FRAGMENT: u32 = 0x2;
+
 // Ico sphere vertex layout:
 // Previous step: `ico_sphere::mesh()` interleaves position and normal values.
 // What this describes: one vertex is position.xyz followed by normal.xyz.

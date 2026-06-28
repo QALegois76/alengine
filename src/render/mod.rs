@@ -4,16 +4,28 @@ pub mod camera;
 mod constants;
 mod frame;
 mod gpu;
+mod grid;
 mod mesh_buffers;
 mod pipeline;
 
 use crate::models::{Assets, Handle, Material, Mesh, Scene, Transform};
 use cgmath::{InnerSpace, Matrix4, Quaternion, Vector3};
 use constants::{
-    GPU_BUFFER_USAGE_COPY_DST, GPU_BUFFER_USAGE_UNIFORM,
+    GPU_BUFFER_USAGE_COPY_DST, GPU_BUFFER_USAGE_INDEX, GPU_BUFFER_USAGE_UNIFORM,
+    GPU_BUFFER_USAGE_VERTEX, GPU_SHADER_STAGE_FRAGMENT, GPU_SHADER_STAGE_VERTEX,
 };
 use wasm_bindgen::prelude::*;
-use web_sys::{GpuBindGroup, GpuBuffer, GpuCanvasContext, GpuDevice, GpuTexture};
+use web_sys::{
+    GpuBindGroup, GpuBindGroupLayout, GpuBuffer, GpuCanvasContext, GpuDevice, GpuPipelineLayout,
+    GpuPrimitiveTopology, GpuRenderPipeline, GpuTexture,
+};
+
+// Mesh de debug (lignes) en espace monde : le marqueur d'origine.
+struct DebugMesh {
+    vertex_buffer: GpuBuffer,
+    index_buffer: GpuBuffer,
+    index_count: u32,
+}
 
 #[wasm_bindgen]
 pub struct Render {
@@ -26,7 +38,25 @@ pub struct Render {
     // Caméra
     pub(crate) camera: camera::Camera,
     camera_uniform_buffer: GpuBuffer,
-    camera_bind_group: Option<GpuBindGroup>, // créé après le premier pipeline (lazy)
+    camera_bind_group: GpuBindGroup,
+
+    // Layouts explicites partagés par tous les pipelines.
+    model_bind_group_layout: GpuBindGroupLayout,
+    pipeline_layout: GpuPipelineLayout,
+
+    // Repères plein écran : grilles infinies (XY/XZ/YZ) et axes infinis (X/Y/Z).
+    grid_pipeline: GpuRenderPipeline,
+    axis_pipeline: GpuRenderPipeline,
+    plane_bind_groups: [GpuBindGroup; 3],
+    axis_bind_groups: [GpuBindGroup; 3],
+    plane_visible: [bool; 3],
+    axes_visible: [bool; 3],
+
+    // Marqueur d'origine (lignes).
+    line_pipeline: GpuRenderPipeline,
+    identity_model_bind_group: GpuBindGroup,
+    origin: DebugMesh,
+    origin_visible: bool,
 
     // Depth buffer (GpuTexture directement car DepthStencilAttachment::new prend &GpuTexture)
     depth_texture: GpuTexture,
@@ -59,14 +89,89 @@ impl Render {
         let mut cam = camera::Camera::default();
         cam.aspect = width as f32 / height as f32;
 
-        // Le camera uniform buffer est créé ici ; son bind group est créé de façon
-        // différée dans add_sphere() dès qu'un pipeline (et son layout) est disponible.
         let camera_data = cam.uniform_data();
         let camera_uniform_buffer = buffer::create_buffer_with_data(
             &gpu_state.device,
             &camera_data,
             GPU_BUFFER_USAGE_UNIFORM | GPU_BUFFER_USAGE_COPY_DST,
         )?;
+
+        // --- Layouts explicites, partagés par tous les pipelines ---
+        // group(0) = caméra (vertex + fragment), group(1) = model / id de repère.
+        let camera_bind_group_layout = pipeline::create_uniform_bind_group_layout(
+            &gpu_state.device,
+            GPU_SHADER_STAGE_VERTEX | GPU_SHADER_STAGE_FRAGMENT,
+        )?;
+        let model_bind_group_layout = pipeline::create_uniform_bind_group_layout(
+            &gpu_state.device,
+            GPU_SHADER_STAGE_VERTEX | GPU_SHADER_STAGE_FRAGMENT,
+        )?;
+        let pipeline_layout = pipeline::create_scene_pipeline_layout(
+            &gpu_state.device,
+            &camera_bind_group_layout,
+            &model_bind_group_layout,
+        );
+
+        // Camera bind group (group 0), créé une fois depuis le layout explicite.
+        let camera_entry =
+            web_sys::GpuBindGroupEntry::new_with_gpu_buffer(0, &camera_uniform_buffer);
+        let camera_bind_group = gpu_state.device.create_bind_group(
+            &web_sys::GpuBindGroupDescriptor::new(&[camera_entry], &camera_bind_group_layout),
+        );
+
+        // Model bind group identité (group 1) pour le marqueur d'origine.
+        let identity: [f32; 16] = [
+            1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+        ];
+        let identity_buffer = buffer::create_buffer_with_data(
+            &gpu_state.device,
+            &identity,
+            GPU_BUFFER_USAGE_UNIFORM | GPU_BUFFER_USAGE_COPY_DST,
+        )?;
+        let identity_entry =
+            web_sys::GpuBindGroupEntry::new_with_gpu_buffer(0, &identity_buffer);
+        let identity_model_bind_group = gpu_state.device.create_bind_group(
+            &web_sys::GpuBindGroupDescriptor::new(&[identity_entry], &model_bind_group_layout),
+        );
+
+        // Pipelines repères : lignes (origine), grilles infinies, axes infinis.
+        let line_pipeline = pipeline::create_pipeline_from_shader(
+            &gpu_state.device,
+            gpu_state.format,
+            &pipeline_layout,
+            grid::LINE_SHADER,
+            GpuPrimitiveTopology::LineList,
+        )?;
+        let grid_src = grid::grid_shader();
+        let grid_pipeline = pipeline::create_grid_pipeline(
+            &gpu_state.device,
+            gpu_state.format,
+            &pipeline_layout,
+            &grid_src,
+        )?;
+        let axis_src = grid::axis_shader();
+        let axis_pipeline = pipeline::create_grid_pipeline(
+            &gpu_state.device,
+            gpu_state.format,
+            &pipeline_layout,
+            &axis_src,
+        )?;
+
+        // Uniformes d'id (group 1) : plan (0=XY,1=XZ,2=YZ) et axe (0=X,1=Y,2=Z).
+        let plane_bind_groups = [
+            make_id_bind_group(&gpu_state.device, &model_bind_group_layout, 0)?,
+            make_id_bind_group(&gpu_state.device, &model_bind_group_layout, 1)?,
+            make_id_bind_group(&gpu_state.device, &model_bind_group_layout, 2)?,
+        ];
+        let axis_bind_groups = [
+            make_id_bind_group(&gpu_state.device, &model_bind_group_layout, 0)?,
+            make_id_bind_group(&gpu_state.device, &model_bind_group_layout, 1)?,
+            make_id_bind_group(&gpu_state.device, &model_bind_group_layout, 2)?,
+        ];
+
+        // Marqueur d'origine.
+        let (origin_v, origin_i) = grid::origin_mesh(0.12);
+        let origin = make_debug_mesh(&gpu_state.device, &origin_v, &origin_i)?;
 
         Ok(Self {
             device: gpu_state.device,
@@ -76,7 +181,19 @@ impl Render {
             assets: Assets { meshes: Vec::new(), materials: Vec::new() },
             camera: cam,
             camera_uniform_buffer,
-            camera_bind_group: None,
+            camera_bind_group,
+            model_bind_group_layout,
+            pipeline_layout,
+            grid_pipeline,
+            axis_pipeline,
+            plane_bind_groups,
+            axis_bind_groups,
+            plane_visible: [false, true, false], // XZ (sol) par défaut
+            axes_visible: [true, true, true],
+            line_pipeline,
+            identity_model_bind_group,
+            origin,
+            origin_visible: true,
             depth_texture,
             mouse_dx: 0.0,
             mouse_dy: 0.0,
@@ -94,7 +211,6 @@ impl Render {
     }
 
     // Ajoute une sphère ico dans la scène.
-    // Le premier appel initialise aussi le camera bind group (lazy).
     pub fn add_sphere(
         &mut self,
         transform: Transform,
@@ -112,20 +228,13 @@ impl Render {
         let shader = shader_source
             .as_deref()
             .unwrap_or(crate::models_3d::ico_sphere::SHADER);
-        let pipeline =
-            pipeline::create_pipeline_from_shader(&self.device, self.format, shader)?;
-
-        // --- Camera bind group (lazy, une seule fois) ---
-        // Utilise le group(0) layout du premier pipeline créé.
-        // Tous les shaders doivent suivre la même convention : group(0) = CameraUniform.
-        if self.camera_bind_group.is_none() {
-            let layout = pipeline.get_bind_group_layout(0);
-            let entry  = web_sys::GpuBindGroupEntry::new_with_gpu_buffer(0, &self.camera_uniform_buffer);
-            let bg = self.device.create_bind_group(
-                &web_sys::GpuBindGroupDescriptor::new(&[entry], &layout),
-            );
-            self.camera_bind_group = Some(bg);
-        }
+        let pipeline = pipeline::create_pipeline_from_shader(
+            &self.device,
+            self.format,
+            &self.pipeline_layout,
+            shader,
+            GpuPrimitiveTopology::TriangleList,
+        )?;
 
         // --- Model uniform buffer (group 1) ---
         let matrix = compute_matrix(transform);
@@ -136,10 +245,9 @@ impl Render {
             GPU_BUFFER_USAGE_UNIFORM | GPU_BUFFER_USAGE_COPY_DST,
         )?;
 
-        let model_layout = pipeline.get_bind_group_layout(1);
         let model_entry  = web_sys::GpuBindGroupEntry::new_with_gpu_buffer(0, &model_buffer);
         let model_bg = self.device.create_bind_group(
-            &web_sys::GpuBindGroupDescriptor::new(&[model_entry], &model_layout),
+            &web_sys::GpuBindGroupDescriptor::new(&[model_entry], &self.model_bind_group_layout),
         );
 
         let material_index = self.assets.materials.len() as u32;
@@ -167,13 +275,42 @@ impl Render {
 
     // Rendu direct sans mise à jour de la caméra (compatibilité).
     pub fn draw_frame(&self) -> Result<(), JsValue> {
+        let mut planes: Vec<&GpuBindGroup> = Vec::new();
+        for (i, bg) in self.plane_bind_groups.iter().enumerate() {
+            if self.plane_visible[i] {
+                planes.push(bg);
+            }
+        }
+        let mut axes: Vec<&GpuBindGroup> = Vec::new();
+        for (i, bg) in self.axis_bind_groups.iter().enumerate() {
+            if self.axes_visible[i] {
+                axes.push(bg);
+            }
+        }
+        let mut lines: Vec<frame::DebugMeshRef> = Vec::new();
+        if self.origin_visible {
+            let m = &self.origin;
+            lines.push((&m.vertex_buffer, &m.index_buffer, m.index_count));
+        }
+
+        let overlay = frame::Overlay {
+            grid_pipeline: &self.grid_pipeline,
+            grid_planes: &planes,
+            axis_pipeline: &self.axis_pipeline,
+            axes: &axes,
+            line_pipeline: &self.line_pipeline,
+            line_model_bind_group: &self.identity_model_bind_group,
+            lines: &lines,
+        };
+
         frame::draw_scene(
             &self.device,
             &self.context,
             &self.scene,
             &self.assets,
-            self.camera_bind_group.as_ref(),
+            Some(&self.camera_bind_group),
             &self.depth_texture,
+            Some(&overlay),
         )
     }
 
@@ -228,6 +365,18 @@ impl Render {
     pub fn set_aspect(&mut self, aspect: f32) {
         self.camera.aspect = aspect;
     }
+
+    // --- API repères : plans de grille, axes, origine ---
+
+    pub fn set_plane_xy_visible(&mut self, visible: bool) { self.plane_visible[0] = visible; }
+    pub fn set_plane_xz_visible(&mut self, visible: bool) { self.plane_visible[1] = visible; }
+    pub fn set_plane_yz_visible(&mut self, visible: bool) { self.plane_visible[2] = visible; }
+
+    pub fn set_axis_x_visible(&mut self, visible: bool) { self.axes_visible[0] = visible; }
+    pub fn set_axis_y_visible(&mut self, visible: bool) { self.axes_visible[1] = visible; }
+    pub fn set_axis_z_visible(&mut self, visible: bool) { self.axes_visible[2] = visible; }
+
+    pub fn set_origin_visible(&mut self, visible: bool) { self.origin_visible = visible; }
 }
 
 // --- Fonctions privées ---
@@ -266,6 +415,47 @@ impl Render {
             .queue()
             .write_buffer_with_u32_and_u8_slice(&self.camera_uniform_buffer, 0, bytes)
     }
+}
+
+// Crée les buffers GPU d'un mesh de debug (lignes) à partir de données CPU.
+fn make_debug_mesh(
+    device: &GpuDevice,
+    vertices: &[f32],
+    indices: &[u16],
+) -> Result<DebugMesh, JsValue> {
+    let vertex_buffer = buffer::create_buffer_with_data(
+        device,
+        vertices,
+        GPU_BUFFER_USAGE_VERTEX | GPU_BUFFER_USAGE_COPY_DST,
+    )?;
+    let index_buffer = buffer::create_buffer_with_data(
+        device,
+        indices,
+        GPU_BUFFER_USAGE_INDEX | GPU_BUFFER_USAGE_COPY_DST,
+    )?;
+    Ok(DebugMesh {
+        vertex_buffer,
+        index_buffer,
+        index_count: indices.len() as u32,
+    })
+}
+
+// Crée un bind group group(1) ne portant qu'un id (plan ou axe) en info.x.
+fn make_id_bind_group(
+    device: &GpuDevice,
+    layout: &GpuBindGroupLayout,
+    id: u32,
+) -> Result<GpuBindGroup, JsValue> {
+    let data: [u32; 4] = [id, 0, 0, 0];
+    let buffer = buffer::create_buffer_with_data(
+        device,
+        &data,
+        GPU_BUFFER_USAGE_UNIFORM | GPU_BUFFER_USAGE_COPY_DST,
+    )?;
+    let entry = web_sys::GpuBindGroupEntry::new_with_gpu_buffer(0, &buffer);
+    Ok(device.create_bind_group(
+        &web_sys::GpuBindGroupDescriptor::new(&[entry], layout),
+    ))
 }
 
 fn gpu_error(message: &str) -> JsValue {

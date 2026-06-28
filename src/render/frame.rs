@@ -2,16 +2,33 @@ use crate::models::{Assets, RenderItem, Scene};
 use crate::render::compute_matrix;
 use wasm_bindgen::prelude::*;
 use web_sys::{
-    GpuBindGroup, GpuCanvasContext, GpuDevice, GpuIndexFormat, GpuLoadOp,
+    GpuBindGroup, GpuBuffer, GpuCanvasContext, GpuDevice, GpuIndexFormat, GpuLoadOp,
     GpuRenderPassColorAttachment, GpuRenderPassDepthStencilAttachment, GpuRenderPassDescriptor,
-    GpuStoreOp, GpuTexture, GpuTextureView,
+    GpuRenderPipeline, GpuStoreOp, GpuTexture, GpuTextureView,
 };
+
+// Mesh de debug en lignes : (vertex buffer, index buffer, nb indices).
+pub type DebugMeshRef<'a> = (&'a GpuBuffer, &'a GpuBuffer, u32);
+
+// Overlay de repères dessiné dans la passe de la scène, après les objets.
+// Tout réutilise group(0) = caméra (déjà posé). group(1) varie :
+//   - grilles / axes : uniforme d'id (plein écran, draw(3))
+//   - lignes (origine) : model matrix identité
+pub struct Overlay<'a> {
+    pub grid_pipeline: &'a GpuRenderPipeline,
+    pub grid_planes: &'a [&'a GpuBindGroup],
+    pub axis_pipeline: &'a GpuRenderPipeline,
+    pub axes: &'a [&'a GpuBindGroup],
+    pub line_pipeline: &'a GpuRenderPipeline,
+    pub line_model_bind_group: &'a GpuBindGroup,
+    pub lines: &'a [DebugMeshRef<'a>],
+}
 
 // Encode et soumet une frame complète.
 //
-// Bind groups :
+// Bind groups de la scène :
 //   group(0) = camera_bind_group (partagé, posé une fois avant la boucle)
-//   group(1) = model  bind group (par objet, dans material.bind_group)
+//   group(1) = model bind group (par objet, dans material.bind_group)
 pub fn draw_scene(
     device: &GpuDevice,
     context: &GpuCanvasContext,
@@ -19,6 +36,7 @@ pub fn draw_scene(
     assets: &Assets,
     camera_bind_group: Option<&GpuBindGroup>,
     depth_texture: &GpuTexture,
+    overlay: Option<&Overlay>,
 ) -> Result<(), JsValue> {
     let texture = context.get_current_texture()?;
     let color_view = texture.create_view()?;
@@ -53,6 +71,33 @@ pub fn draw_scene(
         pass.set_vertex_buffer(0, Some(&mesh.vertex_buffer));
         pass.set_index_buffer(&mesh.index_buffer, GpuIndexFormat::Uint16);
         pass.draw_indexed(mesh.index_count);
+    }
+
+    // Overlay de repères. Ordre : grilles, puis axes (au-dessus), puis origine.
+    if let Some(ov) = overlay {
+        if !ov.grid_planes.is_empty() {
+            pass.set_pipeline(ov.grid_pipeline);
+            for plane in ov.grid_planes {
+                pass.set_bind_group(1, Some(*plane));
+                pass.draw(3);
+            }
+        }
+        if !ov.axes.is_empty() {
+            pass.set_pipeline(ov.axis_pipeline);
+            for axis in ov.axes {
+                pass.set_bind_group(1, Some(*axis));
+                pass.draw(3);
+            }
+        }
+        if !ov.lines.is_empty() {
+            pass.set_pipeline(ov.line_pipeline);
+            pass.set_bind_group(1, Some(ov.line_model_bind_group));
+            for (vertex_buffer, index_buffer, index_count) in ov.lines {
+                pass.set_vertex_buffer(0, Some(*vertex_buffer));
+                pass.set_index_buffer(*index_buffer, GpuIndexFormat::Uint16);
+                pass.draw_indexed(*index_count);
+            }
+        }
     }
 
     pass.end();

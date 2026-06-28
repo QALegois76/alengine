@@ -1,4 +1,4 @@
-use cgmath::{perspective, Deg, InnerSpace, Matrix4, Point3, Vector3};
+use cgmath::{perspective, Deg, InnerSpace, Matrix4, Point3, SquareMatrix, Vector3};
 
 pub enum CameraMode {
     Orbit,
@@ -50,7 +50,7 @@ impl Camera {
             fps_pitch: 0.0,
             orbit_sensitivity: 0.005,
             pan_sensitivity: 0.0015,
-            zoom_sensitivity: 0.12,
+            zoom_sensitivity: 0.001,
             fps_look_sensitivity: 0.003,
             fps_move_speed: 5.0,
         }
@@ -121,9 +121,16 @@ impl Camera {
         }
     }
 
-    // Données uploadées en uniform buffer : view_proj (16 f32) + view_pos (4 f32) = 80 bytes.
-    pub fn uniform_data(&self) -> [f32; 20] {
-        let vp: [[f32; 4]; 4] = (self.projection_matrix() * self.view_matrix()).into();
+    // Données uploadées en uniform buffer :
+    //   view_proj     (16 f32, offset 0)
+    //   view_pos      (4 f32,  offset 64)
+    //   inv_view_proj (16 f32, offset 80)   → 144 bytes
+    // Les shaders qui n'ont besoin que des deux premiers champs déclarent un
+    // struct de 80 octets : le binding plus grand reste valide.
+    pub fn uniform_data(&self) -> [f32; 36] {
+        let vp_mat = self.projection_matrix() * self.view_matrix();
+        let vp: [[f32; 4]; 4] = vp_mat.into();
+        let inv: [[f32; 4]; 4] = vp_mat.invert().unwrap_or_else(Matrix4::identity).into();
         let pos = self.position();
         [
             vp[0][0], vp[0][1], vp[0][2], vp[0][3],
@@ -131,6 +138,10 @@ impl Camera {
             vp[2][0], vp[2][1], vp[2][2], vp[2][3],
             vp[3][0], vp[3][1], vp[3][2], vp[3][3],
             pos[0], pos[1], pos[2], 1.0,
+            inv[0][0], inv[0][1], inv[0][2], inv[0][3],
+            inv[1][0], inv[1][1], inv[1][2], inv[1][3],
+            inv[2][0], inv[2][1], inv[2][2], inv[2][3],
+            inv[3][0], inv[3][1], inv[3][2], inv[3][3],
         ]
     }
 
