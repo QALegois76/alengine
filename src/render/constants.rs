@@ -3,6 +3,9 @@
 pub const GPU_BUFFER_USAGE_COPY_DST: u32 = 0x8;
 pub const GPU_BUFFER_USAGE_INDEX: u32 = 0x10;
 pub const GPU_BUFFER_USAGE_VERTEX: u32 = 0x20;
+pub const GPU_BUFFER_USAGE_UNIFORM: u32 = 0x40;
+
+pub const GPU_TEXTURE_USAGE_RENDER_ATTACHMENT: u32 = 0x10;
 
 // Ico sphere vertex layout:
 // Previous step: `ico_sphere::mesh()` interleaves position and normal values.

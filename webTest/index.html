@@ -1,14 +1,34 @@
 <!doctype html>
-<html lang="en">
+<html lang="fr">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>alEngine WebGPU Triangle</title>
+  <title>alEngine — WebGPU</title>
   <link rel="stylesheet" href="index.css">
 </head>
 <body>
-<p id="tile">Hello to alEngine</p>
   <canvas id="canvas"></canvas>
+
+  <!-- HUD -->
+  <div id="hud">
+    <div id="hud-left">
+      <span id="mode-label">🔄 Orbit</span>
+      <button id="mode-btn">Tab — changer</button>
+    </div>
+    <div id="hud-hint" id="orbit-hint">
+      Gauche: orbite &nbsp;·&nbsp; Droit: pan &nbsp;·&nbsp; Scroll: zoom
+    </div>
+  </div>
+
+  <!-- Overlay de chargement -->
+  <div id="loading">
+    <div id="loading-inner">
+      <div class="spinner"></div>
+      <span>Initialisation WebGPU…</span>
+    </div>
+  </div>
+
+  <!-- Erreurs -->
   <div id="status"></div>
 
   <script type="module" src="index.js"></script>

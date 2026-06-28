@@ -1,6 +1,13 @@
+// World.rs — Structures de données de la scène.
+//
+// État actuel : approche "SoA naïve" (vecteurs parallèles dans Scene).
+// Évolution prévue : archétype ECS (voir ECS_DESIGN.md).
+// Les Handle<T> servent déjà de références typées stables entre les vecteurs.
 use wasm_bindgen::prelude::*;
 use web_sys::{GpuBindGroup, GpuBuffer, GpuRenderPipeline};
 
+// Référence typée et versionnée vers un asset ou une entité.
+// `generation` permet d'invalider les handles après suppression (évite les dangling refs).
 pub struct Handle<T> {
     pub index: u32,
     pub generation: u32,
@@ -50,6 +57,9 @@ impl<T> std::hash::Hash for Handle<T> {
     }
 }
 
+// Composant de positionnement dans l'espace monde.
+// Exposé à JS via wasm-bindgen pour permettre la construction depuis index.js.
+// TODO ECS : devenir un composant standard dans un Archetype.
 #[wasm_bindgen]
 #[derive(Copy, Clone)]
 pub struct Transform {
@@ -94,6 +104,9 @@ pub struct MeshRenderer {
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Entity(u32);
 
+// Conteneur de la scène : vecteurs parallèles indexés par Entity.
+// Limitation actuelle : ajout uniquement, pas de suppression (pas de génération).
+// TODO ECS : remplacer par un World avec archetypes et queries typées.
 pub struct Scene {
     pub entities: Vec<Entity>,
 

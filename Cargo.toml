@@ -55,6 +55,11 @@ web-sys = { version = "0.3.95", features = [
   "HtmlCanvasElement",
   "Navigator",
   "Window",
+  "GpuCompareFunction",
+  "GpuDepthStencilState",
+  "GpuRenderPassDepthStencilAttachment",
+  "GpuTextureDescriptor",
+  "gpu_texture_usage",
 ] }
 
 # The `console_error_panic_hook` crate provides better debugging of panics by

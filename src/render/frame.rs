@@ -2,28 +2,38 @@ use crate::models::{Assets, RenderItem, Scene};
 use crate::render::compute_matrix;
 use wasm_bindgen::prelude::*;
 use web_sys::{
-    GpuCanvasContext, GpuDevice, GpuIndexFormat, GpuLoadOp, GpuRenderPassColorAttachment,
-    GpuRenderPassDescriptor, GpuStoreOp, GpuTextureView,
+    GpuBindGroup, GpuCanvasContext, GpuDevice, GpuIndexFormat, GpuLoadOp,
+    GpuRenderPassColorAttachment, GpuRenderPassDepthStencilAttachment, GpuRenderPassDescriptor,
+    GpuStoreOp, GpuTexture, GpuTextureView,
 };
 
-// Draw an entire scene composed of objects. Each object provides its own
-// pipeline and buffers; we bind them in turn and issue indexed draws.
+// Encode et soumet une frame complète.
+//
+// Bind groups :
+//   group(0) = camera_bind_group (partagé, posé une fois avant la boucle)
+//   group(1) = model  bind group (par objet, dans material.bind_group)
 pub fn draw_scene(
     device: &GpuDevice,
     context: &GpuCanvasContext,
     scene: &Scene,
     assets: &Assets,
+    camera_bind_group: Option<&GpuBindGroup>,
+    depth_texture: &GpuTexture,
 ) -> Result<(), JsValue> {
     let texture = context.get_current_texture()?;
-    let view = texture.create_view()?;
+    let color_view = texture.create_view()?;
 
-    let command_encoder = device.create_command_encoder();
-    let pass_descriptor = create_pass(&view);
-    let pass = command_encoder.begin_render_pass(&pass_descriptor)?;
+    let encoder    = device.create_command_encoder();
+    let pass_desc  = create_pass(&color_view, depth_texture);
+    let pass       = encoder.begin_render_pass(&pass_desc)?;
+
+    // Pose le camera bind group une seule fois pour toute la frame.
+    if let Some(cbg) = camera_bind_group {
+        pass.set_bind_group(0, Some(cbg));
+    }
 
     let items = build_render_items(scene);
-
-    for item in items {
+    for item in &items {
         let mesh = assets
             .meshes
             .get(item.mesh.index as usize)
@@ -34,29 +44,41 @@ pub fn draw_scene(
             .ok_or_else(|| missing_asset("material", item.material.index))?;
 
         pass.set_pipeline(&material.pipeline);
-        if let Some(bind_group) = &material.bind_group {
-            pass.set_bind_group(0, Some(bind_group));
+
+        // Model matrix au group(1).
+        if let Some(model_bg) = &material.bind_group {
+            pass.set_bind_group(1, Some(model_bg));
         }
+
         pass.set_vertex_buffer(0, Some(&mesh.vertex_buffer));
         pass.set_index_buffer(&mesh.index_buffer, GpuIndexFormat::Uint16);
-
         pass.draw_indexed(mesh.index_count);
     }
 
     pass.end();
-
-    device.queue().submit(&[command_encoder.finish()]);
+    device.queue().submit(&[encoder.finish()]);
     Ok(())
 }
 
-fn create_pass(view: &GpuTextureView) -> GpuRenderPassDescriptor {
-    let color_attachment = GpuRenderPassColorAttachment::new_with_gpu_texture_view(
+fn create_pass(
+    color_view: &GpuTextureView,
+    depth_texture: &GpuTexture,
+) -> GpuRenderPassDescriptor {
+    let color_att = GpuRenderPassColorAttachment::new_with_gpu_texture_view(
         GpuLoadOp::Clear,
         GpuStoreOp::Store,
-        view,
+        color_view,
     );
-    color_attachment.set_clear_value(&[0.02.into(), 0.025.into(), 0.035.into(), 1.0.into()]);
-    GpuRenderPassDescriptor::new(&[js_sys::JsOption::wrap(color_attachment)])
+    color_att.set_clear_value(&[0.02_f64.into(), 0.025_f64.into(), 0.035_f64.into(), 1.0_f64.into()]);
+
+    let depth_att = GpuRenderPassDepthStencilAttachment::new(depth_texture);
+    depth_att.set_depth_load_op(GpuLoadOp::Clear);
+    depth_att.set_depth_store_op(GpuStoreOp::Store);
+    depth_att.set_depth_clear_value(1.0_f32);
+
+    let desc = GpuRenderPassDescriptor::new(&[js_sys::JsOption::wrap(color_att)]);
+    desc.set_depth_stencil_attachment(&depth_att);
+    desc
 }
 
 fn missing_asset(kind: &str, index: u32) -> JsValue {
@@ -65,16 +87,14 @@ fn missing_asset(kind: &str, index: u32) -> JsValue {
 
 pub fn build_render_items(scene: &Scene) -> Vec<RenderItem> {
     let mut items = Vec::new();
-
     for (index, renderer) in scene.mesh_renderers.iter().enumerate() {
         if let (Some(renderer), Some(transform)) = (renderer, scene.transforms.get(index)) {
             items.push(RenderItem {
-                mesh: renderer.mesh,
-                material: renderer.material,
+                mesh:      renderer.mesh,
+                material:  renderer.material,
                 transform: compute_matrix(*transform),
             });
         }
     }
-
     items
 }
