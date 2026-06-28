@@ -3,10 +3,12 @@ mod buffer;
 pub mod camera;
 mod constants;
 mod frame;
+mod geo;
 mod gpu;
 mod grid;
 mod mesh_buffers;
 mod pipeline;
+mod texture;
 
 use crate::models::{Assets, Handle, Material, Mesh, Scene, Transform};
 use cgmath::{InnerSpace, Matrix4, Quaternion, Vector3};
@@ -14,10 +16,12 @@ use constants::{
     GPU_BUFFER_USAGE_COPY_DST, GPU_BUFFER_USAGE_INDEX, GPU_BUFFER_USAGE_UNIFORM,
     GPU_BUFFER_USAGE_VERTEX, GPU_SHADER_STAGE_FRAGMENT, GPU_SHADER_STAGE_VERTEX,
 };
+use geo::CoordinateTransform;
+use std::collections::{HashMap, HashSet};
 use wasm_bindgen::prelude::*;
 use web_sys::{
     GpuBindGroup, GpuBindGroupLayout, GpuBuffer, GpuCanvasContext, GpuDevice, GpuPipelineLayout,
-    GpuPrimitiveTopology, GpuRenderPipeline, GpuTexture,
+    GpuPrimitiveTopology, GpuRenderPipeline, GpuSampler, GpuTexture,
 };
 
 // Mesh de debug (lignes) en espace monde : le marqueur d'origine.
@@ -25,6 +29,12 @@ struct DebugMesh {
     vertex_buffer: GpuBuffer,
     index_buffer: GpuBuffer,
     index_count: u32,
+}
+
+// Tuile de fond de carte : un quad texturé + son bind group texture (group 2).
+struct BasemapTile {
+    mesh: DebugMesh,
+    texture: GpuBindGroup,
 }
 
 #[wasm_bindgen]
@@ -57,6 +67,16 @@ pub struct Render {
     identity_model_bind_group: GpuBindGroup,
     origin: DebugMesh,
     origin_visible: bool,
+
+    // Globe : tuiles satellite drapées sur la sphère, streamées dynamiquement.
+    basemap_pipeline: GpuRenderPipeline,
+    texture_bind_group_layout: GpuBindGroupLayout,
+    sampler: GpuSampler,
+    globe_enabled: bool,
+    globe_radius: f32,
+    globe_tiles: HashMap<(u32, u32, u32), BasemapTile>, // cache (z, col, row) → tuile
+    globe_requested: HashSet<(u32, u32, u32)>,          // tuiles en cours de fetch
+    globe_visible: HashSet<(u32, u32, u32)>,            // fenêtre courante à dessiner
 
     // Depth buffer (GpuTexture directement car DepthStencilAttachment::new prend &GpuTexture)
     depth_texture: GpuTexture,
@@ -173,7 +193,25 @@ impl Render {
         let (origin_v, origin_i) = grid::origin_mesh(0.12);
         let origin = make_debug_mesh(&gpu_state.device, &origin_v, &origin_i)?;
 
-        Ok(Self {
+        // Fond de carte : layout texture (group 2), sampler et pipeline texturé.
+        let texture_bind_group_layout =
+            texture::create_texture_bind_group_layout(&gpu_state.device)?;
+        let sampler = texture::create_sampler(&gpu_state.device);
+        let textured_pipeline_layout = pipeline::create_textured_pipeline_layout(
+            &gpu_state.device,
+            &camera_bind_group_layout,
+            &model_bind_group_layout,
+            &texture_bind_group_layout,
+        );
+        let basemap_pipeline = pipeline::create_pipeline_from_shader(
+            &gpu_state.device,
+            gpu_state.format,
+            &textured_pipeline_layout,
+            texture::TEXTURED_SHADER,
+            GpuPrimitiveTopology::TriangleList,
+        )?;
+
+        let mut render = Self {
             device: gpu_state.device,
             context: gpu_state.context,
             format: gpu_state.format,
@@ -188,12 +226,20 @@ impl Render {
             axis_pipeline,
             plane_bind_groups,
             axis_bind_groups,
-            plane_visible: [false, true, false], // XZ (sol) par défaut
+            plane_visible: [false, false, false], // off par défaut (le globe est la scène)
             axes_visible: [true, true, true],
             line_pipeline,
             identity_model_bind_group,
             origin,
             origin_visible: true,
+            basemap_pipeline,
+            texture_bind_group_layout,
+            sampler,
+            globe_enabled: true,
+            globe_radius: geo::GLOBE_RADIUS,
+            globe_tiles: HashMap::new(),
+            globe_requested: HashSet::new(),
+            globe_visible: HashSet::new(),
             depth_texture,
             mouse_dx: 0.0,
             mouse_dy: 0.0,
@@ -207,7 +253,12 @@ impl Render {
             key_d: false,
             key_q: false,
             key_e: false,
-        })
+        };
+
+        // Vue par défaut : la France (priorité de travail), pays entier visible.
+        render.focus_on(2.5, 46.6, 0.22);
+
+        Ok(render)
     }
 
     // Ajoute une sphère ico dans la scène.
@@ -269,6 +320,7 @@ impl Render {
     // Appelé depuis requestAnimationFrame. dt est en secondes.
     pub fn tick(&mut self, dt: f32) -> Result<(), JsValue> {
         self.process_input(dt);
+        self.update_clip_planes();
         self.upload_camera()?;
         self.draw_frame()
     }
@@ -303,6 +355,25 @@ impl Render {
             lines: &lines,
         };
 
+        let mut basemap_tiles: Vec<frame::BasemapTileRef> = Vec::new();
+        if self.globe_enabled {
+            for key in &self.globe_visible {
+                if let Some(t) = self.globe_tiles.get(key) {
+                    basemap_tiles.push((
+                        &t.texture,
+                        &t.mesh.vertex_buffer,
+                        &t.mesh.index_buffer,
+                        t.mesh.index_count,
+                    ));
+                }
+            }
+        }
+        let basemap = frame::Basemap {
+            pipeline: &self.basemap_pipeline,
+            model_bind_group: &self.identity_model_bind_group,
+            tiles: &basemap_tiles,
+        };
+
         frame::draw_scene(
             &self.device,
             &self.context,
@@ -310,6 +381,7 @@ impl Render {
             &self.assets,
             Some(&self.camera_bind_group),
             &self.depth_texture,
+            Some(&basemap),
             Some(&overlay),
         )
     }
@@ -377,6 +449,170 @@ impl Render {
     pub fn set_axis_z_visible(&mut self, visible: bool) { self.axes_visible[2] = visible; }
 
     pub fn set_origin_visible(&mut self, visible: bool) { self.origin_visible = visible; }
+
+    // --- API globe / fond de carte dynamique ---
+
+    pub fn set_globe_enabled(&mut self, enabled: bool) {
+        self.globe_enabled = enabled;
+        if !enabled {
+            self.globe_tiles.clear();
+            self.globe_requested.clear();
+            self.globe_visible.clear();
+        }
+    }
+
+    // Recentre l'orbite sur le point du globe sous le pixel (NDC ∈ [-1,1]).
+    // Garde l'œil immobile ; renvoie true si le rayon touche le globe.
+    pub fn set_orbit_from_screen(&mut self, ndc_x: f32, ndc_y: f32) -> bool {
+        let (eye, dir) = self.camera.screen_ray(ndc_x, ndc_y);
+        let r = self.globe_radius;
+        // |eye + t·dir|² = r² ; dir unitaire → a = 1.
+        let b = 2.0 * (eye[0] * dir[0] + eye[1] * dir[1] + eye[2] * dir[2]);
+        let c = eye[0] * eye[0] + eye[1] * eye[1] + eye[2] * eye[2] - r * r;
+        let disc = b * b - 4.0 * c;
+        if disc < 0.0 {
+            return false;
+        }
+        let sq = disc.sqrt();
+        let t0 = (-b - sq) * 0.5;
+        let t1 = (-b + sq) * 0.5;
+        let t = if t0 > 0.0 { t0 } else { t1 };
+        if t <= 0.0 {
+            return false;
+        }
+        let hit = [eye[0] + t * dir[0], eye[1] + t * dir[1], eye[2] + t * dir[2]];
+        self.camera.orbit_to_point(hit);
+        true
+    }
+
+    // Transforme une coordonnée terrestre (lon/lat deg, alt unités monde) en
+    // position monde WebGPU. Base des futurs calques SIG.
+    pub fn geo_to_world(&self, lon: f32, lat: f32, alt: f32) -> Vec<f32> {
+        let transform = geo::Geographic { radius: self.globe_radius as f64 };
+        let p = transform.to_world(lon as f64, lat as f64, alt as f64);
+        vec![p[0], p[1], p[2]]
+    }
+
+    // Centre la vue sur une coordonnée terrestre (lon/lat deg) à une altitude
+    // donnée (unités monde au-dessus de la surface). Le point passe au nadir.
+    pub fn focus_on(&mut self, lon: f32, lat: f32, altitude: f32) {
+        let p = self.geo_to_world(lon, lat, 0.0);
+        self.camera.orbit_to_point([p[0], p[1], p[2]]);
+        self.camera.distance = self.globe_radius + altitude.max(self.globe_radius * 5.0e-6);
+    }
+
+    // Recalcule l'ensemble de tuiles désirées selon la caméra (zoom + fenêtre),
+    // évince le superflu et renvoie les tuiles manquantes à charger : un tableau
+    // plat [z, col, row, z, col, row, …] consommé par JS pour le fetch WMTS.
+    pub fn update_globe(&mut self) -> Vec<i32> {
+        if !self.globe_enabled {
+            return Vec::new();
+        }
+
+        // Altitude au-dessus de la surface → niveau de zoom.
+        let eye = self.camera.position();
+        let dist = (eye[0] * eye[0] + eye[1] * eye[1] + eye[2] * eye[2]).sqrt();
+        let alt = (dist - self.globe_radius).max(1e-4);
+        // Niveau de zoom : taille de tuile ≈ résolution écran. La constante (20)
+        // est calibrée pour atteindre z19 (~0,2 m/px à 45° de latitude).
+        let z = ((20.0 / alt).log2().round() as i32).clamp(1, 19) as u32;
+        let n = 1i64 << z;
+
+        // Point du globe sous la caméra → tuile centrale.
+        let inv = 1.0 / dist.max(1e-6);
+        let dir = [eye[0] * inv, eye[1] * inv, eye[2] * inv];
+        let (lon, lat) = geo::world_dir_to_lonlat(dir);
+        let lat = lat.clamp(-85.0, 85.0);
+        let (cc, cr) = geo::lonlat_to_tile(lon, lat, z);
+        let center_col = cc.floor() as i64;
+        let center_row = cr.floor() as i64;
+
+        // Fenêtre de tuiles autour du centre. Longitude qui boucle (mod n),
+        // latitude bornée (pas de tuile au-delà des limites Mercator).
+        const W: i64 = 3;
+        let mut desired: HashSet<(u32, u32, u32)> = HashSet::new();
+        for d_row in -W..=W {
+            let row = center_row + d_row;
+            if row < 0 || row >= n {
+                continue;
+            }
+            for d_col in -W..=W {
+                let col = ((center_col + d_col) % n + n) % n; // wrap seamless
+                desired.insert((z, col as u32, row as u32));
+            }
+        }
+
+        // Garde en cache toutes les tuiles du zoom courant (le pan reste
+        // instantané quand on revient) ; lâche les autres niveaux de zoom.
+        self.globe_tiles.retain(|key, _| key.0 == z);
+        self.globe_requested.retain(|key| key.0 == z && desired.contains(key));
+
+        // Borne mémoire : au-delà de la capacité, lâche les tuiles hors fenêtre.
+        const CACHE_CAP: usize = 256;
+        if self.globe_tiles.len() > CACHE_CAP {
+            let extra: Vec<(u32, u32, u32)> = self
+                .globe_tiles
+                .keys()
+                .filter(|k| !desired.contains(*k))
+                .cloned()
+                .collect();
+            for k in extra {
+                if self.globe_tiles.len() <= CACHE_CAP {
+                    break;
+                }
+                self.globe_tiles.remove(&k);
+            }
+        }
+
+        // Fenêtre courante à dessiner.
+        self.globe_visible = desired.clone();
+
+        // Tuiles manquantes (ni en cache, ni déjà demandées).
+        let mut pending: Vec<i32> = Vec::new();
+        for key in &desired {
+            if !self.globe_tiles.contains_key(key) && !self.globe_requested.contains(key) {
+                self.globe_requested.insert(*key);
+                pending.push(key.0 as i32);
+                pending.push(key.1 as i32);
+                pending.push(key.2 as i32);
+            }
+        }
+        pending
+    }
+
+    // Reçoit une tuile chargée (ImageBitmap) et la drape sur le globe.
+    pub fn add_globe_tile(
+        &mut self,
+        z: u32,
+        x: u32,
+        y: u32,
+        bitmap: web_sys::ImageBitmap,
+    ) -> Result<(), JsValue> {
+        let key = (z, x, y);
+        self.globe_requested.remove(&key);
+
+        let (verts, indices) = geo::build_tile_mesh(z, x, y, self.globe_radius as f64);
+        let mesh = make_debug_mesh(&self.device, &verts, &indices)?;
+
+        let texture = texture::upload_bitmap(&self.device, &bitmap)?;
+        let view = texture.create_view()?;
+        let tex_entry = web_sys::GpuBindGroupEntry::new_with_gpu_texture_view(0, &view);
+        let samp_entry = web_sys::GpuBindGroupEntry::new(1, &self.sampler);
+        let texture_bg = self.device.create_bind_group(
+            &web_sys::GpuBindGroupDescriptor::new(
+                &[tex_entry, samp_entry],
+                &self.texture_bind_group_layout,
+            ),
+        );
+
+        self.globe_tiles.insert(key, BasemapTile { mesh, texture: texture_bg });
+        Ok(())
+    }
+
+    // Abandonne une demande de tuile (échec de fetch) pour pouvoir réessayer.
+    pub fn cancel_globe_tile(&mut self, z: u32, x: u32, y: u32) {
+        self.globe_requested.remove(&(z, x, y));
+    }
 }
 
 // --- Fonctions privées ---
@@ -393,8 +629,25 @@ impl Render {
         match self.camera.mode {
             camera::CameraMode::Orbit => {
                 if self.left_down   { self.camera.orbit(dx, dy); }
-                if self.right_down || self.middle_down { self.camera.pan(dx, dy); }
-                if scroll.abs() > 0.0 { self.camera.zoom(scroll); }
+                // Pan désactivé sur le globe : l'orbite reste centrée sur la Terre.
+                if !self.globe_enabled && (self.right_down || self.middle_down) {
+                    self.camera.pan(dx, dy);
+                }
+                if scroll.abs() > 0.0 {
+                    if self.globe_enabled {
+                        // Zoom sur l'ALTITUDE au-dessus de la surface : le pas est
+                        // grand en altitude (traversée rapide) et minuscule près du
+                        // sol (réglage fin). La caméra reste hors du globe car
+                        // distance = rayon + altitude > rayon.
+                        let r = self.globe_radius;
+                        let alt = (self.camera.distance - r).max(r * 5.0e-6);
+                        let step = (scroll * 0.0025).clamp(-0.33, 0.33);
+                        let new_alt = (alt * (1.0 + step)).max(r * 5.0e-6);
+                        self.camera.distance = r + new_alt;
+                    } else {
+                        self.camera.zoom(scroll);
+                    }
+                }
             }
             camera::CameraMode::Fps => {
                 if self.left_down { self.camera.fps_look(dx, dy); }
@@ -404,6 +657,20 @@ impl Render {
                 self.camera.fps_move(fwd, rgt, up, dt);
             }
         }
+    }
+
+    // Adapte les plans near/far à l'altitude : sinon le near fixe (0.01) coupe
+    // les tuiles dès qu'on descend près du sol (écran vide → zoom bloqué haut).
+    fn update_clip_planes(&mut self) {
+        if !self.globe_enabled {
+            return;
+        }
+        let eye = self.camera.position();
+        let d = (eye[0] * eye[0] + eye[1] * eye[1] + eye[2] * eye[2]).sqrt();
+        let r = self.globe_radius;
+        let alt = (d - r).max(r * 1e-7);
+        self.camera.near = (alt * 0.25).max(1e-9);
+        self.camera.far = d + r * 1.1;
     }
 
     fn upload_camera(&self) -> Result<(), JsValue> {

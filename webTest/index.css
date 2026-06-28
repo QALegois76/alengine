@@ -130,6 +130,17 @@ canvas {
     font-variant-numeric: tabular-nums;
     color: #58a6ff;
 }
+#debug-panel .dp-btn {
+    background: rgba(88, 166, 255, 0.16);
+    border: 1px solid rgba(88, 166, 255, 0.45);
+    border-radius: 6px;
+    color: #c9d1d9;
+    font: 12px system-ui, sans-serif;
+    padding: 6px 10px;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+#debug-panel .dp-btn:hover { background: rgba(88, 166, 255, 0.30); }
 #debug-panel .ax-x { color: #ea3338; font-weight: 700; }
 #debug-panel .ax-y { color: #4cd852; font-weight: 700; }
 #debug-panel .ax-z { color: #4781fa; font-weight: 700; }

@@ -45,6 +45,23 @@ pub fn create_scene_pipeline_layout(
     device.create_pipeline_layout(&desc)
 }
 
+// Pipeline layout à 3 groupes pour le rendu texturé :
+//   group(0) = caméra, group(1) = model matrix, group(2) = texture + sampler.
+pub fn create_textured_pipeline_layout(
+    device: &GpuDevice,
+    camera_layout: &GpuBindGroupLayout,
+    model_layout: &GpuBindGroupLayout,
+    texture_layout: &GpuBindGroupLayout,
+) -> GpuPipelineLayout {
+    let layouts = [
+        js_sys::JsOption::wrap(camera_layout.clone()),
+        js_sys::JsOption::wrap(model_layout.clone()),
+        js_sys::JsOption::wrap(texture_layout.clone()),
+    ];
+    let desc = GpuPipelineLayoutDescriptor::new(&layouts);
+    device.create_pipeline_layout(&desc)
+}
+
 pub fn create_pipeline_from_shader(
     device: &GpuDevice,
     format: GpuTextureFormat,

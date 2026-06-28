@@ -9,7 +9,19 @@
       "Bash(findstr :8000)",
       "Bash(taskkill /PID 29040 /F)",
       "PowerShell(Stop-Process -Id 29040 -Force)",
-      "PowerShell(Start-Process python -ArgumentList \"-m\", \"http.server\", \"8000\" -WorkingDirectory \"C:\\\\Users\\\\AntoineLegeois\\\\RustroverProjects\\\\alengine\" -WindowStyle Hidden)"
+      "PowerShell(Start-Process python -ArgumentList \"-m\", \"http.server\", \"8000\" -WorkingDirectory \"C:\\\\Users\\\\AntoineLegeois\\\\RustroverProjects\\\\alengine\" -WindowStyle Hidden)",
+      "Bash(cargo install *)",
+      "Bash(trunk build *)",
+      "mcp__Claude_in_Chrome__list_connected_browsers",
+      "Bash(curl -s -i http://127.0.0.1:8080/)",
+      "Bash(curl -s -I http://127.0.0.1:8080/alengine-5c49738addd8edbd.js)",
+      "Bash(curl -s -I http://127.0.0.1:8080/alengine-5c49738addd8edbd_bg.wasm)",
+      "Bash(curl -s -I http://127.0.0.1:8080/index-5c1ebeb6f3761464.css)",
+      "Bash(curl -s http://127.0.0.1:8080/)",
+      "Read(//c/Users/qaleg/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/web-sys-0.3.97/src/features/**)",
+      "WebFetch(domain:data.geopf.fr)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)"
     ]
   }
 }

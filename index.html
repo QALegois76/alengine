@@ -34,7 +34,9 @@
     <label><input type="checkbox" id="cb-ay" checked> <span class="ax-y">Y</span> vert</label>
     <label><input type="checkbox" id="cb-az" checked> <span class="ax-z">Z</span> bleu</label>
     <div class="dp-title">Divers</div>
-    <label><input type="checkbox" id="cb-origin" checked> Origine (0,0,0)</label>
+    <label><input type="checkbox" id="cb-origin"> Origine (0,0,0)</label>
+    <div class="dp-title">Globe (IGN satellite)</div>
+    <label><input type="checkbox" id="cb-globe" checked> Afficher le globe</label>
   </div>
 
   <div id="loading">
@@ -116,21 +118,31 @@ fn fs_main(f: VertOut) -> @location(0) vec4<f32> {
 
                 const renderer = await Render.create();
 
-                const t1 = Transform.identity();
-                t1.x = -1.2; t1.sx = 0.5; t1.sy = 0.5; t1.sz = 0.5;
-                renderer.add_sphere(t1, null);
-
-                const t2 = Transform.identity();
-                t2.x = 1.2; t2.sx = 0.7; t2.sy = 0.7; t2.sz = 0.7;
-                t2.rz = 0.707; t2.rw = 0.707;
-                renderer.add_sphere(t2, null);
-
-                const t3 = Transform.identity();
-                t3.y = 1.4;
-                renderer.add_sphere(t3, ORANGE_SHADER);
+                // La scène est le globe : les tuiles satellite se streament
+                // dynamiquement (voir streamGlobe ci-dessous). Pas d'objets de test.
 
                 loading.classList.add("hidden");
                 setMode(renderer);
+
+                // ── Streaming des tuiles du globe (WMTS IGN ORTHO) ──────────
+                const TILE_URL = (z, x, y) =>
+                    "https://data.geopf.fr/wmts?SERVICE=WMTS&VERSION=1.0.0&REQUEST=GetTile"
+                    + "&LAYER=ORTHOIMAGERY.ORTHOPHOTOS&STYLE=normal&TILEMATRIXSET=PM"
+                    + `&TILEMATRIX=${z}&TILEROW=${y}&TILECOL=${x}&FORMAT=image/jpeg`;
+
+                function streamGlobe() {
+                    let pending;
+                    try { pending = renderer.update_globe(); }
+                    catch (e) { console.error("update_globe", e); return; }
+                    for (let i = 0; i < pending.length; i += 3) {
+                        const z = pending[i], x = pending[i + 1], y = pending[i + 2];
+                        fetch(TILE_URL(z, x, y))
+                            .then(r => r.ok ? r.blob() : Promise.reject(r.status))
+                            .then(b => createImageBitmap(b))
+                            .then(bmp => renderer.add_globe_tile(z, x, y, bmp))
+                            .catch(() => renderer.cancel_globe_tile(z, x, y));
+                    }
+                }
 
                 let lastTime = performance.now();
                 function frame(now) {
@@ -143,6 +155,7 @@ fn fs_main(f: VertOut) -> @location(0) vec4<f32> {
                         status.textContent = "Erreur de rendu : " + (e?.message ?? String(e));
                         return;
                     }
+                    streamGlobe();
                     requestAnimationFrame(frame);
                 }
                 requestAnimationFrame(frame);
@@ -155,6 +168,14 @@ fn fs_main(f: VertOut) -> @location(0) vec4<f32> {
                 });
                 canvas.addEventListener("mouseup",     e => renderer.on_mouse_button(e.button, false));
                 canvas.addEventListener("wheel",       e => { e.preventDefault(); renderer.on_scroll(e.deltaY); }, { passive: false });
+
+                // Double-clic : recentre l'orbite sur le point cliqué du globe.
+                canvas.addEventListener("dblclick", e => {
+                    const rect = canvas.getBoundingClientRect();
+                    const nx = (e.clientX - rect.left) / rect.width * 2 - 1;
+                    const ny = -((e.clientY - rect.top) / rect.height * 2 - 1);
+                    renderer.set_orbit_from_screen(nx, ny);
+                });
 
                 document.addEventListener("keydown", e => {
                     renderer.on_key(e.code, true);
@@ -180,6 +201,8 @@ fn fs_main(f: VertOut) -> @location(0) vec4<f32> {
                 $("cb-ay").addEventListener("change", e => renderer.set_axis_y_visible(e.target.checked));
                 $("cb-az").addEventListener("change", e => renderer.set_axis_z_visible(e.target.checked));
                 $("cb-origin").addEventListener("change", e => renderer.set_origin_visible(e.target.checked));
+
+                $("cb-globe").addEventListener("change", e => renderer.set_globe_enabled(e.target.checked));
 
                 window.addEventListener("resize", () => {
                     syncCanvasSize();

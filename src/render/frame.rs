@@ -10,6 +10,16 @@ use web_sys::{
 // Mesh de debug en lignes : (vertex buffer, index buffer, nb indices).
 pub type DebugMeshRef<'a> = (&'a GpuBuffer, &'a GpuBuffer, u32);
 
+// Tuile de fond de carte : (bind group texture group(2), vertex, index, nb indices).
+pub type BasemapTileRef<'a> = (&'a GpuBindGroup, &'a GpuBuffer, &'a GpuBuffer, u32);
+
+// Fond de carte : tuiles texturées opaques posées au sol, dessinées avant la scène.
+pub struct Basemap<'a> {
+    pub pipeline: &'a GpuRenderPipeline,
+    pub model_bind_group: &'a GpuBindGroup, // group(1) identité (positions en monde)
+    pub tiles: &'a [BasemapTileRef<'a>],
+}
+
 // Overlay de repères dessiné dans la passe de la scène, après les objets.
 // Tout réutilise group(0) = caméra (déjà posé). group(1) varie :
 //   - grilles / axes : uniforme d'id (plein écran, draw(3))
@@ -36,6 +46,7 @@ pub fn draw_scene(
     assets: &Assets,
     camera_bind_group: Option<&GpuBindGroup>,
     depth_texture: &GpuTexture,
+    basemap: Option<&Basemap>,
     overlay: Option<&Overlay>,
 ) -> Result<(), JsValue> {
     let texture = context.get_current_texture()?;
@@ -48,6 +59,20 @@ pub fn draw_scene(
     // Pose le camera bind group une seule fois pour toute la frame.
     if let Some(cbg) = camera_bind_group {
         pass.set_bind_group(0, Some(cbg));
+    }
+
+    // Fond de carte (tuiles texturées opaques), dessiné avant la scène.
+    if let Some(bm) = basemap {
+        if !bm.tiles.is_empty() {
+            pass.set_pipeline(bm.pipeline);
+            pass.set_bind_group(1, Some(bm.model_bind_group));
+            for (texture_bg, vertex_buffer, index_buffer, index_count) in bm.tiles {
+                pass.set_bind_group(2, Some(*texture_bg));
+                pass.set_vertex_buffer(0, Some(*vertex_buffer));
+                pass.set_index_buffer(*index_buffer, GpuIndexFormat::Uint16);
+                pass.draw_indexed(*index_count);
+            }
+        }
     }
 
     let items = build_render_items(scene);

@@ -1,4 +1,4 @@
-use cgmath::{perspective, Deg, InnerSpace, Matrix4, Point3, SquareMatrix, Vector3};
+use cgmath::{perspective, Deg, InnerSpace, Matrix4, Point3, SquareMatrix, Vector3, Vector4};
 
 pub enum CameraMode {
     Orbit,
@@ -119,6 +119,30 @@ impl Camera {
             CameraMode::Orbit => self.orbit_eye(),
             CameraMode::Fps => self.fps_position,
         }
+    }
+
+    // Rayon monde (origine = œil, direction unitaire) passant par le pixel NDC.
+    pub fn screen_ray(&self, ndc_x: f32, ndc_y: f32) -> ([f32; 3], [f32; 3]) {
+        let vp = self.projection_matrix() * self.view_matrix();
+        let inv = vp.invert().unwrap_or_else(Matrix4::identity);
+        let p = inv * Vector4::new(ndc_x, ndc_y, 0.0, 1.0);
+        let near = Vector3::new(p.x / p.w, p.y / p.w, p.z / p.w);
+        let eye = self.position();
+        let dir = (near - Vector3::new(eye[0], eye[1], eye[2])).normalize();
+        (eye, [dir.x, dir.y, dir.z])
+    }
+
+    // Réoriente l'orbite (centrée sur le globe) pour amener `point` au nadir,
+    // c.-à-d. juste sous l'œil. Garde la cible (centre) et la distance ; seuls
+    // yaw/pitch changent. Évite que la caméra n'entre dans le globe.
+    pub fn orbit_to_point(&mut self, point: [f32; 3]) {
+        let len =
+            (point[0] * point[0] + point[1] * point[1] + point[2] * point[2]).sqrt().max(1e-6);
+        let dx = point[0] / len;
+        let dy = point[1] / len;
+        let dz = point[2] / len;
+        self.pitch = dy.clamp(-0.999, 0.999).asin();
+        self.yaw = dx.atan2(dz);
     }
 
     // Données uploadées en uniform buffer :

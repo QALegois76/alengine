@@ -5,6 +5,8 @@ pub const GPU_BUFFER_USAGE_INDEX: u32 = 0x10;
 pub const GPU_BUFFER_USAGE_VERTEX: u32 = 0x20;
 pub const GPU_BUFFER_USAGE_UNIFORM: u32 = 0x40;
 
+pub const GPU_TEXTURE_USAGE_COPY_DST: u32 = 0x2;
+pub const GPU_TEXTURE_USAGE_TEXTURE_BINDING: u32 = 0x4;
 pub const GPU_TEXTURE_USAGE_RENDER_ATTACHMENT: u32 = 0x10;
 
 // Visibilité des bindings dans un GpuBindGroupLayoutEntry (GPUShaderStage).
